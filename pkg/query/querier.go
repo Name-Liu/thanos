@@ -5,7 +5,6 @@ package query
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	"github.com/thanos-io/thanos/pkg/extprom"
 	"github.com/thanos-io/thanos/pkg/gate"
 	"github.com/thanos-io/thanos/pkg/store"
-	"github.com/thanos-io/thanos/pkg/store/labelpb"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
 	"github.com/thanos-io/thanos/pkg/tracing"
 )
@@ -297,7 +295,7 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 	}
 
 	// TODO(fabxc): this could potentially pushed further down into the store API to make true streaming possible.
-	sortDedupLabels(resp.seriesSet, q.replicaLabels)
+	dedup.SortLabels(resp.seriesSet, q.replicaLabels)
 	set := &promSeriesSet{
 		mint:  q.mint,
 		maxt:  q.maxt,
@@ -309,28 +307,6 @@ func (q *querier) selectFn(ctx context.Context, hints *storage.SelectHints, ms .
 	// The merged series set assembles all potentially-overlapping time ranges of the same series into a single one.
 	// TODO(bwplotka): We could potentially dedup on chunk level, use chunk iterator for that when available.
 	return dedup.NewSeriesSet(set, q.replicaLabels, len(aggrs) == 1 && aggrs[0] == storepb.Aggr_COUNTER), nil
-}
-
-// sortDedupLabels re-sorts the set so that the same series with different replica
-// labels are coming right after each other.
-func sortDedupLabels(set []storepb.Series, replicaLabels map[string]struct{}) {
-	for _, s := range set {
-		// Move the replica labels to the very end.
-		sort.Slice(s.Labels, func(i, j int) bool {
-			if _, ok := replicaLabels[s.Labels[i].Name]; ok {
-				return false
-			}
-			if _, ok := replicaLabels[s.Labels[j].Name]; ok {
-				return true
-			}
-			return s.Labels[i].Name < s.Labels[j].Name
-		})
-	}
-	// With the re-ordered label sets, re-sorting all series aligns the same series
-	// from different replicas sequentially.
-	sort.Slice(set, func(i, j int) bool {
-		return labels.Compare(labelpb.ZLabelsToPromLabels(set[i].Labels), labelpb.ZLabelsToPromLabels(set[j].Labels)) < 0
-	})
 }
 
 // LabelValues returns all potential values for a label name.
